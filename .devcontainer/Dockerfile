@@ -1,4 +1,4 @@
 FROM alpine:latest
 
 RUN apk update
-RUN apk add git clang musl-dev openssh
+RUN apk add clang lld compiler-rt musl-dev git openssh make
