@@ -11,13 +11,25 @@
 #include <sys/wait.h>
 
 #define STACK_SIZE (1024 * 1024)
+#define MAX_ARGS 32
+#define min(a, b) (a < b ? a: b)
 
-int jail(void *args) {
-  printf("Hello !! ( child ) \n");
-  return EXIT_SUCCESS;
+typedef struct jail_args {
+    const char *command;
+    char *argv[MAX_ARGS + 1];
+} jail_args_t;
+
+int jail(void *arg) {
+    jail_args_t *jail_args = (jail_args_t*) arg;
+    return execvp(jail_args->command, jail_args->argv);
 }
 
-int main(int argc, char const *argv[]) {
+int main(int argc, char *const *argv) {
+    if (argc == 1) {
+        printf("usage: %s [COMMAND] [ARG...] \n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
     char *stack = (char *) mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
     if (stack == MAP_FAILED) {
         perror("mmap failed");
@@ -25,9 +37,13 @@ int main(int argc, char const *argv[]) {
     }
     char *stack_top = stack + STACK_SIZE;
 
-    printf("Hello, World! ( foo ) \n");
+    jail_args_t args = {0};
+    args.command = argv[1];
+    for (int i = 1; i < min(argc, MAX_ARGS); i++) {
+       args.argv[i - 1] = argv[i];
+    }
 
-    int pid = clone(jail, stack_top, CLONE_NEWUTS | SIGCHLD, 0);
+    int pid = clone(jail, stack_top, CLONE_NEWUTS | SIGCHLD, &args);
     if (pid == -1) {
         perror("clone failed");
         exit(EXIT_FAILURE);
@@ -38,8 +54,6 @@ int main(int argc, char const *argv[]) {
         exit(EXIT_FAILURE);
     }
     
-    printf("child has terminated\n");
-
     return EXIT_SUCCESS;
 }
 
