@@ -26,19 +26,17 @@ char* alloc_stack(size_t size) {
     return stack;
 }
 
-typedef struct jail_args {
-    const char *command;
+typedef struct child_args {
     char *argv[MAX_ARGS + 1];
-} jail_args_t;
+} child_args_t;
 
-noreturn int command(void *arg) {
-    jail_args_t *jail_args = (jail_args_t*) arg;
-    execvp(jail_args->command, jail_args->argv);
-    perror("execvp failed");
-    exit(EXIT_FAILURE);
-}
+int child(void *arg) {
 
-int jail(void *arg) {
+    if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) {
+        perror("mount failed");
+        return -1;
+    }
+
     if (chroot("/var/images/ubuntu") == -1) {
         perror("chroot failed");
         exit(EXIT_FAILURE);
@@ -49,35 +47,26 @@ int jail(void *arg) {
         exit(EXIT_FAILURE);
     }
 
-    if (mount("proc", "/proc", "proc", 0, 0) == -1) {
-        perror("mount failed");
-        exit(EXIT_FAILURE);
+    if (mount("proc", "/proc", "proc", 0, NULL)) {
+        perror("mount proc failed\n");
+        return errno;
     }
 
-    jail_args_t *jail_args = (jail_args_t*) arg;
-
-    char *stack = alloc_stack(STACK_SIZE);
-    char *stack_top = stack + STACK_SIZE;
-
-    int pid = clone(command, stack_top, SIGCHLD, arg);
-    if (pid == -1) {
-        perror("clone failed");
-        exit(EXIT_FAILURE);
+    if (mount("sys", "/sys", "sysfs", 0, NULL)) {
+        perror("mount sys failed\n");
+        return errno;
     }
 
-    if (waitpid(pid, NULL, 0) == -1)  {
-        perror("waitpid failed");
-        exit(EXIT_FAILURE);
+    if (mount("dev", "/dev", "devtmpfs", 0, NULL)) {
+        perror("mount dev failed\n");
+        return errno;
     }
 
-    if (umount("/proc") == -1) {
-        perror("umount failed");
-        exit(EXIT_FAILURE);
-    }
-
-    return 0;
+    child_args_t *child_args = (child_args_t*) arg;
+    execvpe(child_args->argv[0], child_args->argv, NULL);
+    perror("execvp failed");
+    exit(EXIT_FAILURE);
 }
-
 
 int main(int argc, char *const *argv) {
     if (argc == 1) {
@@ -88,13 +77,12 @@ int main(int argc, char *const *argv) {
     char *stack = alloc_stack(STACK_SIZE);
     char *stack_top = stack + STACK_SIZE;
 
-    jail_args_t args = {0};
-    args.command = argv[1];
+    child_args_t args = {0};
     for (int i = 1; i < min(argc, MAX_ARGS); i++) {
        args.argv[i - 1] = argv[i];
     }
 
-    int pid = clone(jail, stack_top, CLONE_NEWPID | CLONE_NEWUTS | SIGCHLD, &args);
+    int pid = clone(child, stack_top, CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWUTS | SIGCHLD, &args);
     if (pid == -1) {
         perror("clone failed");
         exit(EXIT_FAILURE);
